@@ -1,79 +1,77 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Neon Harbor — demo staging for screenshots: put the game into a scene worth showing.
+// One file, one job: given a shot name, arrange the player, the police and the mission.
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+import { TUNING } from './config.js';
+import { makeCar } from './vehicles.js';
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
+function policeBehind(state, x, y, count, gap) {
+  for (let i = 0; i < count; i++) {
+    state.cars.push(makeCar({
+      x: x - (i + 1) * gap,
+      y: y + (i % 2 === 0 ? 26 : -26),
+      angle: 0,
+      color: '#22262e',
+      kind: 'police',
+      driver: 'police',
+    }));
+    state.cars[state.cars.length - 1].speed = 300;
   }
-  return Infinity;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+export function applyShot(state, name) {
+  const p = state.player;
+  if (name === 'start') {
+    state.mode = 'menu';
+    p.x = 1400;
+    p.y = 1400;
+    return;
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
+  if (name === 'chase') {
+    // Cover shot: a getaway in progress — wanted 3, police on the tail,
+    // the minimap, the mission objective and the HUD all in frame.
+    state.missions.start(1);
+    const car = makeCar({ x: 600, y: 1400, angle: 0, color: '#d94040', kind: 'sport', driver: 'player' });
+    car.speed = 380;
+    state.cars.push(car);
+    p.car = car;
+    p.onFoot = false;
+    p.x = car.x;
+    p.y = car.y;
+    policeBehind(state, car.x, car.y, 3, 160);
+    state.wanted = 3;
+    state.heat = 100;
+    state.demoDrive = true;
+    state.mode = 'playing';
+    return;
   }
-  return best;
-}
-
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+  if (name === 'foot') {
+    // On foot downtown: pedestrians, traffic, one star, the docks job on the HUD.
+    state.missions.start(0);
+    p.x = 1400;
+    p.y = 1400;
+    p.onFoot = true;
+    p.car = null;
+    state.wanted = 1;
+    state.heat = 100;
+    state.mode = 'playing';
+    return;
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+  if (name === 'vault') {
+    // The Harbor Vault job mid-hold: the vault ring, four stars, police closing in.
+    state.missions.start(2);
+    state.missions.stage = 1;
+    state.missions.holdTime = TUNING.holdSeconds * 0.25;
+    p.x = 1800;
+    p.y = 1420;
+    p.onFoot = true;
+    p.car = null;
+    state.wanted = 4;
+    state.heat = 100;
+    // Police start far enough west that they close in during the shot
+    // without sitting on the player long enough to bust them.
+    policeBehind(state, 1450, 1400, 2, 110);
+    state.mode = 'playing';
+    return;
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  state.mode = 'menu';
 }
